@@ -1,0 +1,127 @@
+# 과제 진행도를 30분 주기로 수집해 docs/data/current.json에 반영한다.
+# 인증은 Repository Secret `CODYSSEY_SESSION`의 JSESSIONID만 사용한다 (읽기 전용 API).
+# 로스터는 공유 허브(codyssey_roster_hub) 신선본 우선 → actions/cache → 길드 API 순.
+name: Collect Quest Progress
+
+on:
+  schedule:
+    # 형제 레포(EV/Jail) 스트림과 겹치지 않게 오프셋을 둔 30분 주기 4스트림.
+    # GitHub cron은 UTC 기준이며, 스케줄러 누락 대비로 30분 슬롯당 발화 기회 4회.
+    - cron: "3,33 * * * *"
+    - cron: "9,39 * * * *"
+    - cron: "15,45 * * * *"
+    - cron: "21,51 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write  # 데이터 커밋 후 pages.yml 디스패치용
+
+concurrency:
+  group: quest-collect
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 세션 시크릿 확인
+        id: check
+        env:
+          CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+        run: |
+          if [ -z "$CODYSSEY_SESSION" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::CODYSSEY_SESSION 미등록 — 로그인 전까지 수집을 건 너뜁니다."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          node-version: 20
+
+      # 로스터(길드 멤버 mbrId·이름·레벨·길드)는 준정적 데이터라 actions/cache에 보관해 두고
+      # 8시간 이내이면 길드 API를 생략한다.
+      - name: Restore roster cache
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .roster-cache
+          key: quest-roster-${{ github.run_id }}
+          restore-keys: quest-roster-
+
+      # 공유 로스터 허브(비공개)의 최신본이 신선하면 actions/cache 로스터보다 우선 적용한다.
+      # 페치 구현은 codyssey_commons(공개)에서 받아 실행 — 허브 구조 변경 시 한 곳만 고친다.
+      # jail 모드: 허브 roster.json(fetchedAt/season/week/guilds/members)을 그대로 저장한다.
+      # 실패/만료 시 조용히 폐기해 기존 캐시 → 길드 API 경로를 탄다.
+      - name: Fetch shared roster from hub
+        if: steps.check.outputs.skip != 'true'
+        env:
+          HUB_PAT: ${{ secrets.HUB_PAT }}
+        run: |
+          if ! curl -sfL https://raw.githubusercontent.com/giyeop-cody/codyssey_commons/main/roster/fetch_hub_roster.cjs -o /tmp/fetch_hub_roster.cjs; then
+            echo "::notice::페처 다운로드 실패 — 자체 경로 사용"
+            exit 0
+          fi
+          node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
+
+      - name: Collect quest progress
+        if: steps.check.outputs.skip != 'true'
+        env:
+          CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+          QUEST_ROSTER_FILE: .roster-cache/roster.json
+          TZ: Asia/Seoul
+        run: node collect_quest.js
+
+      - name: Commit data
+        if: steps.check.outputs.skip != 'true'
+        id: commit
+        run: |
+          git config user.name "quest-tracker-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs/data/
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "data: update quest progress $(date -u +'%Y-%m-%d %H:%M UTC')"
+            # 동시 실행 run이 같은 생성 JSON을 push하면 rebase 충돌로 실패했다가
+            # 다음 run에서야 회복됐다 (EV 2026-07-18 22:13 UTC 관측). 최대 3회 재시도하고
+            # 충돌 시에는 이번 run 생성본(가장 최신)을 채택해 rebase를 이어간다.
+            for i in 1 2 3; do
+              if git pull --rebase; then
+                git push && break
+              fi
+              if git checkout --theirs -- docs/data/ 2>/dev/null; then
+                echo "생성 데이터 충돌 → 이번 run 생성본 채택 (${i}회차)"
+                git add docs/data/
+                if GIT_EDITOR=true git rebase --continue; then
+                  git push && break
+                fi
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save roster cache
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .roster-cache
+          key: quest-roster-${{ github.run_id }}
+
+      # GITHUB_TOKEN으로 한 push는 다른 워크플로를 트리거하지 못하므로(GitHub 재귀 방지)
+      # 데이터가 실제로 바뀐 경우에만 Pages 배포 워크플로를 직접 디스패치한다.
+      - name: Trigger Pages deploy
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml || echo "::notice::Pages 디스패치 실패 — 다음 수동 push 시 자동 배포됩니다"

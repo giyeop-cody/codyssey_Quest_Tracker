@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Codyssey 과제 진행도</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>📋 Codyssey 과제 진행도</h1>
+    <p class="sub" id="metaLine">불러오는 중…</p>
+  </div>
+  <div class="legend">
+    <span><i class="dot M"></i>미진행</span>
+    <span><i class="dot P"></i>진행중</span>
+    <span><i class="dot E"></i>평가중</span>
+    <span><i class="dot C"></i>완료</span>
+  </div>
+</header>
+
+<nav class="guilds" id="guildChips"></nav>
+
+<main id="cards" aria-live="polite"></main>
+
+<footer class="foot">
+  <p>상태 정의 — 미진행: 평가 미시작(대기중) / 진행중: 과제·평가 여정 진행, 예약 평가 없음 / 평가중: 예약된 평가 슬롯 있음 / 완료: 평가완료 (FAIL 포함, 별도 표기)</p>
+  <p>길드 귀속: 멤버는 소속 첫 길드로만 집계됩니다 (이중 집계 방지). 대상 없음: 멤버 목록에 없는 과제는 그 멤버 집계에서 제외됩니다.</p>
+</footer>
+
+<div class="modal hidden" id="modal">
+  <div class="modal-card">
+    <button class="close" id="modalClose">✕</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

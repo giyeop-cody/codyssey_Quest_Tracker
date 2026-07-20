@@ -1,0 +1,11 @@
+{
+  "name": "codyssey-quest-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codyssey 과제 진행도 트래커 — 길드 멤버 과제 상태 집계 대시보드",
+  "scripts": {
+    "collect": "node collect_quest.js",
+    "check": "node --check collect_quest.js && node --check lib/progress-core.cjs",
+    "test": "node --test test/*.test.js"
+  }
+}
