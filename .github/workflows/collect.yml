@@ -34,7 +34,7 @@ jobs:
         run: |
           if [ -z "$CODYSSEY_SESSION" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::CODYSSEY_SESSION 미등록 — 로그인 전까지 수집을 건 너뜁니다."
+            echo "::notice::CODYSSEY_SESSION 미등록 — 로그인 전까지 수집을 건너뜁니다."
           fi
 
       - uses: actions/checkout@v4
