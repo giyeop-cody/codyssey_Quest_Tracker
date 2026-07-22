@@ -12,6 +12,8 @@ const {
   memberProgress,
   aggregate,
   collectAssignments,
+  fmtYmd,
+  buildQuestAxis,
 } = require("../lib/progress-core.cjs");
 
 function row(cd, over = {}) {
@@ -70,6 +72,47 @@ test("collectAssignments: 첫 목격 순 유지 + 중복 제거", () => {
   assert.equal(list.length, 2);
   assert.equal(list[0].uqstnNo, "185012");
   assert.equal(list[1].uqstnNm, "Mini Redis 구축");
+});
+
+test("fmtYmd: 구분자 섞인 날짜를 ISO로 정규화", () => {
+  assert.equal(fmtYmd("2026.07.21"), "2026-07-21");
+  assert.equal(fmtYmd("20260721"), "2026-07-21");
+  assert.equal(fmtYmd("2026-07-21"), "2026-07-21");
+  assert.equal(fmtYmd(""), null);
+  assert.equal(fmtYmd(null), null);
+  assert.equal(fmtYmd("UNKNOWN"), "UNKNOWN"); // 8자리 숫자 아니면 원형 유지
+});
+
+test("buildQuestAxis: 마스터 순서 + 미배정 과제 포함 + census 잔여 보존", () => {
+  const census = [
+    { uqstnNo: "185012", uqstnNm: "SQL", lcorsNm: "DB" },
+    { uqstnNo: "999999", uqstnNm: "마스터에 없는 것", lcorsNm: "DB" },
+  ];
+  const masterCourses = [
+    {
+      lcorsNm: "DB", projectNm: "데이터베이스",
+      quests: [
+        // uqstnSqnt 뒤섞임 → 정렬돼야 함, useYn N → 제외
+        { uqstnNo: 185013, uqstnNm: "FastAPI CRUD", uqstnSqnt: "3", requiredYn: "N", useYn: "Y",
+          lrnBgngYmd: "2026.07.21", lrnEndYmd: "2026.07.27", uqstnLearningTm: "240" },
+        { uqstnNo: 185012, uqstnNm: "SQL", uqstnSqnt: "1", requiredYn: "Y", useYn: "Y" },
+        { uqstnNo: 185014, uqstnNm: "미배정 과제", uqstnSqnt: "2", requiredYn: "Y", useYn: "Y" },
+        { uqstnNo: 185015, uqstnNm: "폐기된 과제", uqstnSqnt: "9", requiredYn: "Y", useYn: "N" },
+      ],
+    },
+  ];
+  const axis = buildQuestAxis(census, masterCourses);
+  assert.deepEqual(axis.map((a) => a.uqstnNo), ["185012", "185014", "185013", "999999"]);
+  assert.equal(axis[1].uqstnNm, "미배정 과제"); // census에 없어도 축에 포함
+  assert.equal(axis[2].requiredYn, "N");
+  assert.equal(axis[2].lrnBgngYmd, "2026-07-21");
+  assert.equal(axis[2].lrnEndYmd, "2026-07-27");
+  assert.equal(axis[2].learningTm, 240);
+  assert.equal(axis[2].fromMaster, true);
+  assert.equal(axis[3].fromMaster, false); // census 잔여는 뒤로
+  // 빈 입력 안전
+  assert.deepEqual(buildQuestAxis([], []), []);
+  assert.equal(buildQuestAxis(census, [])[0].uqstnNo, "185012");
 });
 
 test("aggregate: 길드 귀속(첫 길드) + 목록에 없는 과제는 제외 + 비율", () => {

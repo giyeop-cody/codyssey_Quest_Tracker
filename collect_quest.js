@@ -17,6 +17,7 @@ const {
   memberProgress,
   aggregate,
   collectAssignments,
+  buildQuestAxis,
 } = require("./lib/progress-core.cjs");
 
 const API_BASE = "https://api.usr.codyssey.kr/";
@@ -158,6 +159,39 @@ async function fetchActiveSlotTitles(mbrId) {
   return activeSlotTitles(result && result.reqList);
 }
 
+/* ---------------- 과제 마스터 축 (getUqstnlist) ----------------
+ * census 행의 (projectNo, lcorsNo) 페어를 dedupe해 과정별 전체 과제 목록을 읽는다.
+ * 잡히면 census에 배정 0명인 과제도 축에 포함된다. 실패 시 census 축으로 폴 백한다. */
+async function fetchMasterCourses(evalRowsByMember) {
+  const seen = new Map(); // "projectNo|lcorsNo" → {projectNo, lcorsNo, lcorsNm, projectNm}
+  for (const rows of evalRowsByMember.values()) {
+    for (const row of rows || []) {
+      if (!row || row.projectNo == null || row.lcorsNo == null) continue;
+      const key = `${row.projectNo}|${row.lcorsNo}`;
+      if (!seen.has(key)) {
+        seen.set(key, {
+          projectNo: row.projectNo,
+          lcorsNo: row.lcorsNo,
+          lcorsNm: String(row.lcorsNm || ""),
+          projectNm: String(row.projectNm || ""),
+        });
+      }
+    }
+  }
+  if (!seen.size) throw new Error("census 행에 projectNo/lcorsNo 없음");
+  const courses = [];
+  for (const c of seen.values()) {
+    const result = await postForm("learning/learningProgress/getUqstnlist", {
+      projectNo: String(c.projectNo), lcorsNo: String(c.lcorsNo), teamSn: "0",
+    });
+    const list = Array.isArray(result) ? result : (result && result.uqstnList) || [];
+    if (!list.length) throw new Error(`getUqstnlist 빈 목록 (과정 ${c.projectNo}/${c.lcorsNo})`);
+    courses.push({ ...c, quests: list });
+    await sleep(DELAY_MS);
+  }
+  return courses;
+}
+
 /* ---------------- 메인 ---------------- */
 (async () => {
   const started = Date.now();
@@ -191,7 +225,23 @@ async function fetchActiveSlotTitles(mbrId) {
   }
   if (failed > members.length * 0.2) throw new Error(`멤버 조회 실패 과다 (${failed}/${members.length}) — 수집 중단`);
 
-  const assignments = collectAssignments(evalRowsByMember);
+  const censusAssignments = collectAssignments(evalRowsByMember);
+
+  // 과제 마스터 축: 전체 과정 과제 목록을 축으로 (실패 시 census 축 폴 백)
+  let assignments = censusAssignments;
+  let questMaster = "census";
+  try {
+    const masterCourses = await fetchMasterCourses(evalRowsByMember);
+    const axis = buildQuestAxis(censusAssignments, masterCourses);
+    const added = axis.length - censusAssignments.length;
+    assignments = axis;
+    questMaster = "getUqstnlist";
+    console.log(`마스터 축 적용: 과정 ${masterCourses.length}개 → 과제 ${axis.length}종 (미배정 +${added}, census ${censusAssignments.length}종)`);
+  } catch (err) {
+    if (err.sessionInvalid) throw err;
+    console.warn(`⚠️ 마스터 축 조회 실패 (${err.message}) — census 축으로 진행`);
+  }
+
   const memberEntries = [];
   const covered = new Set();
   for (const m of members) {
@@ -221,6 +271,7 @@ async function fetchActiveSlotTitles(mbrId) {
       guilds: roster.guilds || [],
       statusLabel: STATUS_LABEL,
       statusOrder: STATUS_ORDER,
+      questMaster, // "getUqstnlist" | "census" (마스터 조회 실패 시 폴 백)
       slotWindow: `±${SLOT_BEFORE_D}/${SLOT_AFTER_D}d`,
       durationSec: Math.round((Date.now() - started) / 1000),
     },

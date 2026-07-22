@@ -63,6 +63,28 @@ function countsHtml(a) {
   <div class="ratio">비율 — ${STATUS_ORDER.map((st) => `${L[st]} ${a.ratio[st]}%`).join(" · ")} (대상 ${a.total}명)</div>`;
 }
 
+// "2026-07-21" → "07.21"
+function md(iso) { return iso ? String(iso).slice(5).replace("-", ".") : ""; }
+function periodOf(s) {
+  if (s.lrnBgngYmd && s.lrnEndYmd) return `${md(s.lrnBgngYmd)} ~ ${md(s.lrnEndYmd)}`;
+  if (s.lrnBgngYmd) return `${md(s.lrnBgngYmd)} ~`;
+  return "";
+}
+// 학습시간 단위는 소스 미확인 — 분으로 추정해 표기 (확정 아님)
+function tmOf(s) {
+  if (s.learningTm == null) return "";
+  return s.learningTm < 600 ? `${s.learningTm}분(추정)` : `${(s.learningTm / 60).toFixed(1)}시간(추정)`;
+}
+function questMetaHtml(s) {
+  if (!s.fromMaster) return "";
+  const parts = [s.requiredYn === "N" ? "선택" : "필수"];
+  const p = periodOf(s);
+  if (p) parts.push(p);
+  const t = tmOf(s);
+  if (t) parts.push(t);
+  return `<p class="qmeta">${parts.map(escapeHtml).join(" · ")}</p>`;
+}
+
 function renderCards() {
   const main = document.getElementById("cards");
   main.innerHTML = "";
@@ -70,11 +92,13 @@ function renderCards() {
   if (!list.length) { main.innerHTML = '<p class="empty">데이터가 아직 없습니다.</p>'; return; }
   for (const subj of list) {
     const a = aggregateFor(subj.uqstnNo);
+    const empty = !a.total; // 마스터 축에 있지만 배정 0명인 과제
     const card = document.createElement("article");
-    card.className = "card";
+    card.className = "card" + (empty ? " empty" : "");
     card.innerHTML = `<h3>${escapeHtml(subj.uqstnNm)}</h3>
       <p class="track">${escapeHtml(subj.lcorsNm || "")}</p>
-      ${barHtml(a)}${countsHtml(a)}`;
+      ${questMetaHtml(subj)}
+      ${empty ? '<div class="noassign">아직 배정된 멤버 없음</div>' : barHtml(a) + countsHtml(a)}`;
     card.onclick = () => openModal(subj);
     main.appendChild(card);
   }
@@ -103,7 +127,9 @@ function openModal(subj) {
     }).join("")}</ul>`;
     body.appendChild(h);
   }
-  if (!body.children.length) body.innerHTML = '<p class="empty">해당 멤버가 없습니다.</p>';
+  if (!body.children.length) body.innerHTML = rows.length
+    ? '<p class="empty">해당 멤버가 없습니다.</p>'
+    : '<p class="empty">아직 이 과제가 배정된 멤버가 없습니다.</p>';
   document.getElementById("modal").classList.remove("hidden");
 }
 
@@ -122,10 +148,17 @@ async function boot() {
     return;
   }
   const meta = state.data.meta;
+  const emptyCount = (state.data.assignments || []).filter((s) => {
+    const a = (state.data.aggregates[s.uqstnNo] || {}).ALL;
+    return !a || !a.total;
+  }).length;
   document.getElementById("metaLine").textContent =
     `마지막 수집: ${fmtKst(meta.generatedAt)} · 멤버 ${meta.members}명` +
     (meta.failed ? ` (조회 실패 ${meta.failed}명 제외)` : "") +
-    ` · 시즌 ${meta.season ?? "-"} / 주차 ${meta.week ?? "-"}`;
+    ` · 시즌 ${meta.season ?? "-"} / 주차 ${meta.week ?? "-"}` +
+    (meta.questMaster === "getUqstnlist"
+      ? ` · 마스터 축 ${((state.data.assignments || []).length)}종${emptyCount ? ` (미배정 ${emptyCount}개 포함)` : ""}`
+      : "");
   document.getElementById("modalClose").onclick = () => document.getElementById("modal").classList.add("hidden");
   document.getElementById("modal").onclick = (e) => { if (e.target.id === "modal") e.target.classList.add("hidden"); };
   renderGuildChips();
