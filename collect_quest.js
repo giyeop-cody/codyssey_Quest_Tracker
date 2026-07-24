@@ -123,13 +123,34 @@ async function loadRoster() {
       console.log(`로스터 캐시 사용 (${cached.members.length}명, ${ageH.toFixed(1)}시간 경과, meta ${cached.season}/${cached.week})`);
       return cached;
     }
-    console.log(`로스터 캐시 만료 (${ageH.toFixed(1)}시간) → 길드 API`);
+    console.log(`로스터 캐시 만료 (${ageH.toFixed(1)}시간) → 길드 API 갱신 시도`);
     const season = Number.isFinite(cached.season) ? cached.season : parseInt(process.env.GUILD_SEASON || "5", 10);
     const week = Number.isFinite(cached.week) ? cached.week : parseInt(process.env.GUILD_WEEK || "9", 10);
-    return fetchRosterViaApi(season, week);
+    try {
+      const fresh = await fetchRosterViaApi(season, week);
+      saveRosterCache(fresh);
+      return fresh;
+    } catch (err) {
+      if (err.sessionInvalid) throw err;
+      // 갱신 실패/0명(사이트 멤버십 초기화 등) → 마지막 알려진 명부로 폴 백 (Jail과 동일 정책)
+      console.warn(`⚠️ 길드 API 갱신 실패 (${err.message}) — ${ageH.toFixed(1)}시간 된 캐시 ${cached.members.length}명으로 폴 백`);
+      return cached;
+    }
   }
   console.log("로스터 캐시 없음 → 길드 API");
-  return fetchRosterViaApi(parseInt(process.env.GUILD_SEASON || "5", 10), parseInt(process.env.GUILD_WEEK || "9", 10));
+  const fresh = await fetchRosterViaApi(parseInt(process.env.GUILD_SEASON || "5", 10), parseInt(process.env.GUILD_WEEK || "9", 10));
+  saveRosterCache(fresh);
+  return fresh;
+}
+
+function saveRosterCache(roster) {
+  try {
+    fs.mkdirSync(require("path").dirname(ROSTER_FILE), { recursive: true });
+    fs.writeFileSync(ROSTER_FILE, JSON.stringify(roster));
+    console.log(`로스터 캐시 저장 (${roster.members.length}명 → ${ROSTER_FILE})`);
+  } catch (err) {
+    console.warn(`⚠️ 로스터 캐시 저장 실패 (${err.message}) — 다음 run은 허브/API에서 다시 시도`);
+  }
 }
 
 /* ---------------- 평가 목록 / 슬롯 ---------------- */
