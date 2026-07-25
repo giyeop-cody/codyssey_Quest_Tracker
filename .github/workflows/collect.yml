@@ -75,6 +75,10 @@ jobs:
           fi
           node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
 
+      # 테스트 게이트 (2026-07-25 회귀 점검) — 집계/축 회귀 차단
+      - name: Test gate
+        run: node --test test/progress-core.test.js
+
       - name: Collect quest progress
         if: steps.check.outputs.skip != 'true'
         env:
