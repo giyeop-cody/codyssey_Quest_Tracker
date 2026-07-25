@@ -227,11 +227,11 @@ async function fetchStudyInfo(mbrId, name) {
   const list = Array.isArray(result) ? result : (result && result.list) || [];
   const hit = list.find((row) => row && String(row.mbrId) === String(mbrId));
   if (!hit) return null;
+  // 주의: profImgPath(사용자 업로드 파일명)/recntCntnDt(최근 접속 시각)는 공개 JSON에 싣지 않는다
+  // (행동 감시·실명 파일명 노출 방지, 2026-07-25 프라이버시 점검). 가져오는 것도 exp/pnt뿐.
   return {
     exp: hit.exp != null ? Number(hit.exp) : null,
     pnt: hit.pnt != null ? Number(hit.pnt) : null,
-    profImg: hit.profImgPath || null,
-    recntCntnDt: hit.recntCntnDt || null,
   };
 }
 
@@ -317,7 +317,7 @@ async function fetchStudyInfo(mbrId, name) {
       name: m.name,
       level: m.level ?? null,
       guild: (m.guildNames || [])[0] || "미배정",
-      ...(studyByMember.get(m.mbrId) || {}), // exp/pnt/profImg/recntCntnDt (미발견 시 부재)
+      ...(studyByMember.get(m.mbrId) || {}), // exp/pnt (미발견 시 부재)
       progress: memberProgress(rows),
     });
   }
