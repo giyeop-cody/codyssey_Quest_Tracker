@@ -50,6 +50,11 @@ jobs:
         with:
           node-version: 20
 
+      # 테스트 게이트 — 코어 회귀가 라이브 수집에 직행하는 것을 차단 (2026-07-25 회귀 점검)
+      - name: Test core (node --test)
+        if: steps.check.outputs.skip != 'true'
+        run: npm test
+
       # 로스터(길드 멤버 mbrId·이름·레벨·길드)는 준정적 데이터라 actions/cache에 보관해 두고
       # 8시간 이내이면 길드 API를 생략한다.
       - name: Restore roster cache
