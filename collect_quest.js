@@ -349,8 +349,7 @@ async function fetchStudyInfo(mbrId, name) {
       guild: e.guild,
       exp: e.exp ?? null,
       pnt: e.pnt ?? null,
-      profImg: e.profImg ?? null,
-      recntCntnDt: e.recntCntnDt ?? null,
+      // 주의: profImg/recntCntnDt는 공개 JSON에 싣지 않는다 (2026-07-25 프라이버시 점검)
       progress: Object.fromEntries(e.progress),
     })),
   };
