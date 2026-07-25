@@ -1,7 +1,7 @@
 "use strict";
 
-const STATUS_ORDER = ["M", "P", "E", "C"];
-const SEG_CLASS = { M: "segM", P: "segP", E: "segE", C: "segC" };
+const STATUS_ORDER = ["N", "M", "E", "C"];
+const SEG_CLASS = { N: "segN", M: "segM", E: "segE", C: "segC" };
 
 const state = { data: null, guild: "ALL" };
 
@@ -17,8 +17,12 @@ function scopeOf(subject) {
 }
 
 function aggregateFor(subjNo) {
+  const zero = { N: 0, M: 0, E: 0, C: 0, pass: 0, fail: 0, total: 0, ratio: { N: 0, M: 0, E: 0, C: 0 } };
   const agg = state.data.aggregates[subjNo] || {};
-  return agg[state.guild] || agg.ALL || { M: 0, P: 0, E: 0, C: 0, pass: 0, fail: 0, total: 0, ratio: { M: 0, P: 0, E: 0, C: 0 } };
+  const a = agg[state.guild] || agg.ALL;
+  if (!a) return zero;
+  // 구 포맷 데이터(P 상태, N 없음) 과도기 호환 — 다음 수집에서 신 포맷으로 갱신됨
+  return { ...zero, ...a, ratio: { ...zero.ratio, ...(a.ratio || {}) } };
 }
 
 function memberCountOfGuild(guildName) {
@@ -58,9 +62,9 @@ function countsHtml(a) {
   const L = state.data.meta.statusLabel;
   const fail = a.fail ? ` · <span class="failNote">FAIL ${a.fail}</span>` : "";
   return `<div class="counts">
-    <span>${L.M} <b>${a.M}</b></span><span>${L.P} <b>${a.P}</b></span>
+    <span>${L.N} <b>${a.N}</b></span><span>${L.M} <b>${a.M}</b></span>
     <span>${L.E} <b>${a.E}</b></span><span>${L.C} <b>${a.C}</b>${fail}</div>
-  <div class="ratio">비율 — ${STATUS_ORDER.map((st) => `${L[st]} ${a.ratio[st]}%`).join(" · ")} (대상 ${a.total}명)</div>`;
+  <div class="ratio">비율 — ${STATUS_ORDER.map((st) => `${L[st]} ${a.ratio[st]}%`).join(" · ")} (총 ${a.total}명 기준)</div>`;
 }
 
 // "2026-07-21" → "07.21"
@@ -77,7 +81,7 @@ function tmOf(s) {
 }
 function questMetaHtml(s) {
   if (!s.fromMaster) return "";
-  const parts = [s.requiredYn === "N" ? "선택" : "필수"];
+  const parts = [s.requiredYn === "N" ? "선택" : (s.requiredYn === "Y" ? "필수" : "필수정보 없음")];
   const p = periodOf(s);
   if (p) parts.push(p);
   const t = tmOf(s);
@@ -92,13 +96,14 @@ function renderCards() {
   if (!list.length) { main.innerHTML = '<p class="empty">데이터가 아직 없습니다.</p>'; return; }
   for (const subj of list) {
     const a = aggregateFor(subj.uqstnNo);
-    const empty = !a.total; // 마스터 축에 있지만 배정 0명인 과제
+    // total 은 스코프 전체 멤버 수 — 착수(M+E+C)가 0명이면 미시작 100% 카드로 표기
+    const empty = !a.total || (a.M + a.E + a.C) === 0;
     const card = document.createElement("article");
     card.className = "card" + (empty ? " empty" : "");
     card.innerHTML = `<h3>${escapeHtml(subj.uqstnNm)}</h3>
       <p class="track">${escapeHtml(subj.lcorsNm || "")}</p>
       ${questMetaHtml(subj)}
-      ${empty ? '<div class="noassign">아직 배정된 멤버 없음</div>' : barHtml(a) + countsHtml(a)}`;
+      ${empty ? '<div class="noassign">아직 착수한 멤버 없음 (미시작 100%)</div>' : barHtml(a) + countsHtml(a)}`;
     card.onclick = () => openModal(subj);
     main.appendChild(card);
   }
@@ -108,19 +113,18 @@ function openModal(subj) {
   const L = state.data.meta.statusLabel;
   const inGuild = (m) => state.guild === "ALL" || m.guild === state.guild;
   const rows = state.data.members.filter(inGuild)
-    .map((m) => ({ m, p: m.progress[subj.uqstnNo] }))
-    .filter((x) => x.p);
+    .map((m) => ({ m, p: m.progress[subj.uqstnNo] || null, st: m.progress[subj.uqstnNo] ? m.progress[subj.uqstnNo].st : "N" }));
   const body = document.getElementById("modalBody");
   document.getElementById("modalTitle").textContent = `${subj.uqstnNm} — 멤버 목록 (${state.guild === "ALL" ? "전체" : state.guild})`;
   body.innerHTML = "";
   for (const st of STATUS_ORDER) {
-    const group = rows.filter((x) => x.p.st === st);
+    const group = rows.filter((x) => x.st === st);
     if (!group.length) continue;
     const h = document.createElement("div");
     h.className = "stGroup";
     group.sort((a, b) => String(a.m.name).localeCompare(String(b.m.name), "ko"));
     h.innerHTML = `<h4>${L[st]} (${group.length})</h4><ul>${group.map(({ m, p }) => {
-      const extra = st === "C"
+      const extra = st === "C" && p
         ? `<span class="sc ${p.resultNm === "FAIL" ? "fail" : ""}">${p.resultNm || ""}${p.score != null ? ` · ${p.score}점` : ""}</span>`
         : "";
       return `<li><span>${escapeHtml(m.name)}</span><span class="g">${escapeHtml(m.guild)}${m.level != null ? ` · Lv.${m.level}` : ""}</span>${extra}</li>`;
@@ -150,14 +154,14 @@ async function boot() {
   const meta = state.data.meta;
   const emptyCount = (state.data.assignments || []).filter((s) => {
     const a = (state.data.aggregates[s.uqstnNo] || {}).ALL;
-    return !a || !a.total;
+    return !a || (a.M + a.E + a.C) === 0;
   }).length;
   document.getElementById("metaLine").textContent =
     `마지막 수집: ${fmtKst(meta.generatedAt)} · 멤버 ${meta.members}명` +
     (meta.failed ? ` (조회 실패 ${meta.failed}명 제외)` : "") +
     ` · 시즌 ${meta.season ?? "-"} / 주차 ${meta.week ?? "-"}` +
     (meta.questMaster === "getUqstnlist"
-      ? ` · 마스터 축 ${((state.data.assignments || []).length)}종${emptyCount ? ` (미배정 ${emptyCount}개 포함)` : ""}`
+      ? ` · 마스터 축 ${((state.data.assignments || []).length)}종${emptyCount ? ` (미착수 ${emptyCount}개 포함)` : ""}`
       : "");
   document.getElementById("modalClose").onclick = () => document.getElementById("modal").classList.add("hidden");
   document.getElementById("modal").onclick = (e) => { if (e.target.id === "modal") e.target.classList.add("hidden"); };

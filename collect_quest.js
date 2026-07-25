@@ -13,7 +13,6 @@ const fs = require("fs");
 const {
   STATUS_ORDER,
   STATUS_LABEL,
-  activeSlotTitles,
   memberProgress,
   aggregate,
   collectAssignments,
@@ -22,12 +21,10 @@ const {
 
 const API_BASE = "https://api.usr.codyssey.kr/";
 const INST_CD = process.env.INST_CD || "00021";
-const GUILD_IDS = (process.env.GUILD_IDS || "3,4,5,6").split(",").map((s) => parseInt(s.trim(), 10)).filter(Number.isFinite);
+const GUILD_IDS = (process.env.GUILD_IDS || "27,28,29,30").split(",").map((s) => parseInt(s.trim(), 10)).filter(Number.isFinite);
 const DELAY_MS = parseInt(process.env.DELAY_MS || "120", 10);
 const ROSTER_FILE = process.env.QUEST_ROSTER_FILE || ".roster-cache/roster.json";
 const OUT_FILE = process.env.OUT_FILE || "docs/data/current.json";
-const SLOT_BEFORE_D = parseInt(process.env.SLOT_BEFORE_D || "14", 10);
-const SLOT_AFTER_D = parseInt(process.env.SLOT_AFTER_D || "14", 10);
 const MAX_EVAL_PAGES = 3; // 인당 최대 100행+ (과제 수는 십여 개)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -172,14 +169,6 @@ function ymdDot(d) {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
 }
 
-async function fetchActiveSlotTitles(mbrId) {
-  const now = Date.now();
-  const bgng = ymdDot(new Date(now - SLOT_BEFORE_D * 86400000));
-  const end = ymdDot(new Date(now + SLOT_AFTER_D * 86400000));
-  const result = await postForm(`schedule/scheduleAllList/?mbrId=${mbrId}&instCd=${INST_CD}&bgngYmd=${bgng}&endYmd=${end}&scheduleType=request`, {});
-  return activeSlotTitles(result && result.reqList);
-}
-
 /* ---------------- 과제 마스터 축 (getUqstnlist) ----------------
  * census 행의 (projectNo, lcorsNo) 페어를 dedupe해 과정별 전체 과제 목록을 읽는다.
  * 잡히면 census에 배정 0명인 과제도 축에 포함된다. 실패 시 census 축으로 폴 백한다. */
@@ -213,6 +202,21 @@ async function fetchMasterCourses(evalRowsByMember) {
   return courses;
 }
 
+/* ---------------- status/list requireYn 오버레이 ----------------
+ * getUqstnlist의 requiredYn이 7/24 배포 이후 전건 null로 날아와 신뢰 불가 (2026-07-25 실측).
+ * status/list의 requireYn은 과목/과제 속성이라 오버레이 소스로 쓴다. 실패하면 null(확인불가) 유지. */
+async function fetchStatusRequireMap() {
+  const data = await getJson(`${API_BASE}learning/learningProgress/status/list`);
+  const list = (data && data.uqstns) || [];
+  const map = new Map();
+  for (const q of list) {
+    if (q && q.uqstnNo != null && (q.requireYn === "Y" || q.requireYn === "N")) {
+      map.set(String(q.uqstnNo), q.requireYn);
+    }
+  }
+  return map;
+}
+
 /* ---------------- 메인 ---------------- */
 (async () => {
   const started = Date.now();
@@ -226,12 +230,10 @@ async function fetchMasterCourses(evalRowsByMember) {
   console.log(`대상 멤버 ${members.length}명`);
 
   const evalRowsByMember = new Map();
-  const slotTitlesByMember = new Map();
   let failed = 0;
   for (const [i, m] of members.entries()) {
     try {
       evalRowsByMember.set(m.mbrId, await fetchMemberEvals(m.mbrId));
-      slotTitlesByMember.set(m.mbrId, await fetchActiveSlotTitles(m.mbrId));
     } catch (err) {
       if (err.sessionInvalid) throw err;
       failed += 1;
@@ -239,7 +241,6 @@ async function fetchMasterCourses(evalRowsByMember) {
         require("crypto").createHash("sha1").update(String(m.mbrId)).digest("hex").slice(0, 8)
       } 조회 실패 (${err.message}) — 제외`);
       evalRowsByMember.delete(m.mbrId);
-      slotTitlesByMember.delete(m.mbrId);
     }
     if ((i + 1) % 25 === 0) console.log(`  ...진행 ${i + 1}/${members.length}`);
     await sleep(DELAY_MS);
@@ -251,9 +252,18 @@ async function fetchMasterCourses(evalRowsByMember) {
   // 과제 마스터 축: 전체 과정 과제 목록을 축으로 (실패 시 census 축 폴 백)
   let assignments = censusAssignments;
   let questMaster = "census";
+  // requireYn 오버레이 (status/list 실측) — 실패필드 null 대응. 실패 시 미적용으로 진행
+  let requireMap = null;
+  try {
+    requireMap = await fetchStatusRequireMap();
+    console.log(`  requireYn 오버레이: ${requireMap.size}건 (status/list)`);
+  } catch (err) {
+    if (err.sessionInvalid) throw err;
+    console.warn(`  ⚠️ status/list 조회 실패 (${err.message}) — requireYn 확인불가로 진행`);
+  }
   try {
     const masterCourses = await fetchMasterCourses(evalRowsByMember);
-    const axis = buildQuestAxis(censusAssignments, masterCourses);
+    const axis = buildQuestAxis(censusAssignments, masterCourses, { requireMap });
     const added = axis.length - censusAssignments.length;
     assignments = axis;
     questMaster = "getUqstnlist";
@@ -274,7 +284,7 @@ async function fetchMasterCourses(evalRowsByMember) {
       name: m.name,
       level: m.level ?? null,
       guild: (m.guildNames || [])[0] || "미배정",
-      progress: memberProgress(rows, slotTitlesByMember.get(m.mbrId)),
+      progress: memberProgress(rows),
     });
   }
 
@@ -293,7 +303,6 @@ async function fetchMasterCourses(evalRowsByMember) {
       statusLabel: STATUS_LABEL,
       statusOrder: STATUS_ORDER,
       questMaster, // "getUqstnlist" | "census" (마스터 조회 실패 시 폴 백)
-      slotWindow: `±${SLOT_BEFORE_D}/${SLOT_AFTER_D}d`,
       durationSec: Math.round((Date.now() - started) / 1000),
     },
     assignments,
@@ -314,7 +323,7 @@ async function fetchMasterCourses(evalRowsByMember) {
   console.log(`✅ 완료: 과제 ${assignments.length}종 / 멤버 ${covered.size}명 (${Math.round((Date.now() - started) / 1000)}s)`);
   for (const a of assignments) {
     const s = allScope(a.uqstnNo);
-    console.log(`  - ${a.uqstnNm}: 미진행 ${s.M} / 진행중 ${s.P} / 평가중 ${s.E} / 완료 ${s.C} (PASS ${s.pass}, FAIL ${s.fail})`);
+    console.log(`  - ${a.uqstnNm}: 미시작 ${s.N} / 미진행 ${s.M} / 평가중 ${s.E} / 완료 ${s.C} (PASS ${s.pass}, FAIL ${s.fail})`);
   }
 })().catch((err) => {
   if (err.sessionInvalid) {

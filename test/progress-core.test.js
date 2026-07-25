@@ -7,8 +7,6 @@ const test = require("node:test");
 const {
   baseStatus,
   subjectKey,
-  activeSlotTitles,
-  finalStatus,
   memberProgress,
   aggregate,
   collectAssignments,
@@ -20,9 +18,9 @@ function row(cd, over = {}) {
   return { evlStusCd: cd, uqstnNo: "185012", uqstnNm: "SQL로 만드는 나만의 데이터베이스", lcorsNm: "데이터베이스와 백엔드", evlNo: "615026", evlDegr: "1", ...over };
 }
 
-test("baseStatus: 00003=C / 00002=P / 그 외=M", () => {
+test("baseStatus: 00003=C / 00002=E(평가중, 07-25 확정) / 그 외=M", () => {
   assert.equal(baseStatus(row("00003")), "C");
-  assert.equal(baseStatus(row("00002")), "P");
+  assert.equal(baseStatus(row("00002")), "E");
   assert.equal(baseStatus(row("00001")), "M");
   assert.equal(baseStatus(row(null)), "M");
   assert.equal(baseStatus(row("99999")), "M");
@@ -34,33 +32,16 @@ test("subjectKey: uqstnNo 우선, 없으면 evlNo", () => {
   assert.equal(subjectKey({ evlStusCd: "00001" }), "");
 });
 
-test("activeSlotTitles: 활성 EV 슬롯만, 종결 코드 제외", () => {
-  const titles = activeSlotTitles([
-    { scdlGubunCd: "EV", fixedCd: "00001", title: "Mini Redis 구축" },
-    { scdlGubunCd: "EV", fixedCd: "00006", title: "완료된 평가" },
-    { scdlGubunCd: "EV", fixedCd: "00005", title: "취소된 평가" },
-    { scdlGubunCd: "EV", fixedCd: "00004", title: "거절된 평가" },
-    { scdlGubunCd: "AM", fixedCd: "00001", title: "학사일정은 버림" },
-  ]);
-  assert.deepEqual([...titles], ["Mini Redis 구축"]);
-});
-
-test("finalStatus: P + 활성 슬롯 과제명 일치 → E (평가중)", () => {
-  const slots = new Set(["SQL로 만드는 나만의 데이터베이스"]);
-  assert.equal(finalStatus(row("00002"), slots), "E");
-  assert.equal(finalStatus(row("00002", { uqstnNm: "다른 과제" }), slots), "P");
-  assert.equal(finalStatus(row("00003"), slots), "C"); // 완료는 슬롯 무관
-  assert.equal(finalStatus(row("00001"), slots), "M"); // 미진행도 슬롯 무관
-});
-
-test("memberProgress: 결과/점수 보존 + 키 맵", () => {
+test("memberProgress: 결과/점수 보존 + 키 맵 + 00002는 E", () => {
   const prog = memberProgress([
     row("00003", { evlResltNm: "PASS", evlScr: "92" }),
     row("00001", { uqstnNo: "185008", uqstnNm: "Mini Redis 구축" }),
-  ], new Set());
+    row("00002", { uqstnNo: "185010", uqstnNm: "포트폴리오" }),
+  ]);
   assert.equal(prog.get("185012").resultNm, "PASS");
   assert.equal(prog.get("185012").score, 92);
   assert.equal(prog.get("185008").st, "M");
+  assert.equal(prog.get("185010").st, "E");
 });
 
 test("collectAssignments: 첫 목격 순 유지 + 중복 제거", () => {
@@ -115,21 +96,41 @@ test("buildQuestAxis: 마스터 순서 + 미배정 과제 포함 + census 잔여
   assert.equal(buildQuestAxis(census, [])[0].uqstnNo, "185012");
 });
 
-test("aggregate: 길드 귀속(첫 길드) + 목록에 없는 과제는 제외 + 비율", () => {
+test("aggregate: 미노출 멤버는 미시작(N) 카운트 — 분모는 스코프 총원 (07-25 확정)", () => {
   const assignments = [{ uqstnNo: "185012", uqstnNm: "SQL", lcorsNm: "" }];
   const mk = (guild, st, resultNm) => ({
     guild,
     progress: new Map([["185012", { st, resultNm: resultNm || null }]]),
   });
-  const entries = [mk("오션", "C", "PASS"), mk("오션", "C", "FAIL"), mk("오로라", "M", null)];
+  const entries = [mk("오션", "C", "PASS"), mk("오션", "C", "FAIL"), mk("오로라", "M", null), { guild: "앰버", progress: new Map() }];
   const out = aggregate(entries, assignments);
   const all = out["185012"].ALL;
-  assert.deepEqual({ M: all.M, P: all.P, E: all.E, C: all.C, pass: all.pass, fail: all.fail, total: all.total },
-    { M: 1, P: 0, E: 0, C: 2, pass: 1, fail: 1, total: 3 });
-  assert.equal(all.ratio.C, 66.7);
+  assert.deepEqual({ N: all.N, M: all.M, E: all.E, C: all.C, pass: all.pass, fail: all.fail, total: all.total },
+    { N: 1, M: 1, E: 0, C: 2, pass: 1, fail: 1, total: 4 });
+  assert.equal(all.ratio.C, 50);
+  assert.equal(all.ratio.N, 25);
   assert.equal(out["185012"]["오션"].C, 2);
-  assert.equal(out["185012"]["오로라"].M, 1);
-  // 과제 목록에 없는 멤버는 집계에 안 들어감
-  const noneEntry = aggregate([{ guild: "앰버", progress: new Map() }], assignments);
-  assert.equal(noneEntry["185012"].ALL.total, 0);
+  assert.equal(out["185012"]["오션"].total, 2);
+  // 미노출 멤버는 해당 길드 스코프에 N으로 귀속
+  assert.equal(out["185012"]["앰버"].N, 1);
+  assert.equal(out["185012"]["앰버"].total, 1);
+});
+
+test("buildQuestAxis: requiredYn — 오버레이(status/list) 우선 / 소스 Y,N 유지 / null은 확인불가", () => {
+  const masterCourses = [{
+    lcorsNm: "DB", projectNm: "데이터베이스",
+    quests: [
+      { uqstnNo: 1, uqstnNm: "소스null", uqstnSqnt: "1", requiredYn: null },
+      { uqstnNo: 2, uqstnNm: "소스Y", uqstnSqnt: "2", requiredYn: "Y" },
+      { uqstnNo: 3, uqstnNm: "오버레이N", uqstnSqnt: "3", requiredYn: null },
+    ],
+  }];
+  const axis = buildQuestAxis([], masterCourses, { requireMap: new Map([["3", "N"]]) });
+  assert.equal(axis[0].requiredYn, null); // 필수정보 없음
+  assert.equal(axis[1].requiredYn, "Y");
+  assert.equal(axis[2].requiredYn, "N"); // 오버레이 우선
+  // 오버레이 없이도 동작
+  const plain = buildQuestAxis([], masterCourses);
+  assert.equal(plain[0].requiredYn, null);
+  assert.equal(plain[1].requiredYn, "Y");
 });

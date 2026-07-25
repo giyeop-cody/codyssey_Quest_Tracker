@@ -1,7 +1,7 @@
 :root {
   --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2d3542;
   --text: #e6edf3; --dim: #8b98a9;
-  --M: #5a6472; --P: #4f8ef7; --E: #f0a828; --C: #3fb96b; --fail: #f0564f;
+  --N: #2e3641; --M: #5a6472; --P: #4f8ef7; --E: #f0a828; --C: #3fb96b; --fail: #f0564f;
 }
 * { box-sizing: border-box; margin: 0; }
 body { background: var(--bg); color: var(--text); font-family: "Pretendard", "Apple SD Gothic Neo", "Segoe UI", sans-serif; padding: 20px; max-width: 1100px; margin: 0 auto; }
@@ -12,7 +12,7 @@ h1 { font-size: 22px; }
 .legend { display: flex; gap: 12px; font-size: 13px; color: var(--dim); }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.dot.M { background: var(--M); } .dot.P { background: var(--P); }
+.dot.N { background: var(--N); } .dot.M { background: var(--M); }
 .dot.E { background: var(--E); } .dot.C { background: var(--C); }
 
 .guilds { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -32,7 +32,7 @@ h1 { font-size: 22px; }
 
 .bar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; background: #0a0e14; border: 1px solid var(--line); }
 .bar > div { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #0d1117; min-width: 0; overflow: hidden; white-space: nowrap; }
-.segM { background: var(--M); } .segP { background: var(--P); color: #fff; }
+.segN { background: var(--N); } .segM { background: var(--M); }
 .segE { background: var(--E); } .segC { background: var(--C); }
 
 .counts { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; font-size: 12.5px; color: var(--dim); }
