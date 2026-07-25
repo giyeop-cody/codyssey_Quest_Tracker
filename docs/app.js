@@ -141,6 +141,47 @@ function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* ---------- 랭커 보드 (레벨↓ → 경험치↓) ---------- */
+
+function setView(v) {
+  state.view = v;
+  for (const btn of document.querySelectorAll("#viewTabs .vtab")) btn.classList.toggle("active", btn.dataset.view === v);
+  document.getElementById("cards").classList.toggle("hidden", v !== "cards");
+  document.getElementById("ranker").classList.toggle("hidden", v !== "ranker");
+  document.getElementById("guildChips").classList.toggle("hidden", v !== "cards");
+  document.getElementById("legend").classList.toggle("hidden", v !== "cards");
+  if (v === "ranker") renderRanker();
+}
+
+function renderRanker() {
+  if (!state.data) return;
+  const note = document.getElementById("rankNote");
+  const body = document.getElementById("rankBody");
+  let ranks = state.data.ranks;
+  if (!ranks || !ranks.length) {
+    // 구 포맷 데이터 폴 백 — 레벨만으로 최소 정렬 (경험치는 "-" 표기)
+    ranks = (state.data.members || []).map((m) => ({ ...m, exp: null, done: 0 }))
+      .sort((a, b) => (b.level || 0) - (a.level || 0) || String(a.name).localeCompare(String(b.name), "ko"))
+      .map((m, i) => ({ ...m, rank: i + 1 }));
+  }
+  const miss = state.data.meta.expMiss || 0;
+  note.textContent = `레벨 → 경험치 순 (${ranks.length}명)` + (miss ? ` · 경험치 매칭 실패 ${miss}명은 "-" 표기` : "");
+  const maxExp = Math.max(0, ...ranks.map((r) => r.exp || 0));
+  body.innerHTML = ranks.map((r) => {
+    const medal = r.rank === 1 ? "🥇" : r.rank === 2 ? "🥈" : r.rank === 3 ? "🥉" : `${r.rank}`;
+    const expTxt = r.exp != null ? r.exp.toLocaleString("ko-KR") : "-";
+    const w = r.exp != null && maxExp ? ((r.exp / maxExp) * 100).toFixed(1) : 0;
+    return `<tr class="${r.rank <= 3 ? "top3" : ""}">
+      <td class="rk">${medal}</td>
+      <td class="nm">${escapeHtml(r.name)}</td>
+      <td>${escapeHtml(r.guild)}</td>
+      <td>Lv.${r.level != null ? r.level : "-"}</td>
+      <td class="expCell"><div class="expBar" style="width:${w}%"></div><span>${expTxt}</span></td>
+      <td>${r.done}개</td>
+    </tr>`;
+  }).join("");
+}
+
 async function boot() {
   try {
     const res = await fetch("data/current.json", { cache: "no-store" });
@@ -165,6 +206,7 @@ async function boot() {
       : "");
   document.getElementById("modalClose").onclick = () => document.getElementById("modal").classList.add("hidden");
   document.getElementById("modal").onclick = (e) => { if (e.target.id === "modal") e.target.classList.add("hidden"); };
+  for (const btn of document.querySelectorAll("#viewTabs .vtab")) btn.onclick = () => setView(btn.dataset.view);
   renderGuildChips();
   renderCards();
 }

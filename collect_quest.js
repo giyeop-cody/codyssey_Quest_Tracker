@@ -17,6 +17,7 @@ const {
   aggregate,
   collectAssignments,
   buildQuestAxis,
+  rankEntries,
 } = require("./lib/progress-core.cjs");
 
 const API_BASE = "https://api.usr.codyssey.kr/";
@@ -217,6 +218,23 @@ async function fetchStatusRequireMap() {
   return map;
 }
 
+/* ---------------- 경험치 수집 (user/getStudyUsers) ----------------
+ * 이 엔드포인트는 10행 캡 + 페이지네이션 없음 (07-25 실측)이라 전수 조회는 불가.
+ * 대신 로스터 이름으로 1명씩 검색하고, 반환 행 중 mbrId가 정확히 일치하는 것만 채택한다.
+ * 동명이인 3쌍 존재 확인 — 이름 매칭만으로는 모호하므로 mbrId 매칭이 필수다. */
+async function fetchStudyInfo(mbrId, name) {
+  const result = await postForm("user/getStudyUsers/", { search: String(name) });
+  const list = Array.isArray(result) ? result : (result && result.list) || [];
+  const hit = list.find((row) => row && String(row.mbrId) === String(mbrId));
+  if (!hit) return null;
+  return {
+    exp: hit.exp != null ? Number(hit.exp) : null,
+    pnt: hit.pnt != null ? Number(hit.pnt) : null,
+    profImg: hit.profImgPath || null,
+    recntCntnDt: hit.recntCntnDt || null,
+  };
+}
+
 /* ---------------- 메인 ---------------- */
 (async () => {
   const started = Date.now();
@@ -246,6 +264,21 @@ async function fetchStatusRequireMap() {
     await sleep(DELAY_MS);
   }
   if (failed > members.length * 0.2) throw new Error(`멤버 조회 실패 과다 (${failed}/${members.length}) — 수집 중단`);
+
+  // 경험치 센서스 (부가 정보 — 실패필드라도 수집 자체는 죽이지 않음)
+  const studyByMember = new Map();
+  let expMiss = 0;
+  for (const m of members) {
+    try {
+      const info = await fetchStudyInfo(m.mbrId, m.name);
+      if (info) studyByMember.set(m.mbrId, info); else expMiss += 1;
+    } catch (err) {
+      if (err.sessionInvalid) throw err;
+      expMiss += 1;
+    }
+    await sleep(DELAY_MS);
+  }
+  console.log(`  경험치 수집: ${studyByMember.size}명 확보${expMiss ? ` (미발견/실패 ${expMiss}명)` : ""}`);
 
   const censusAssignments = collectAssignments(evalRowsByMember);
 
@@ -284,6 +317,7 @@ async function fetchStatusRequireMap() {
       name: m.name,
       level: m.level ?? null,
       guild: (m.guildNames || [])[0] || "미배정",
+      ...(studyByMember.get(m.mbrId) || {}), // exp/pnt/profImg/recntCntnDt (미발견 시 부재)
       progress: memberProgress(rows),
     });
   }
@@ -313,9 +347,17 @@ async function fetchStatusRequireMap() {
       name: e.name,
       level: e.level,
       guild: e.guild,
+      exp: e.exp ?? null,
+      pnt: e.pnt ?? null,
+      profImg: e.profImg ?? null,
+      recntCntnDt: e.recntCntnDt ?? null,
       progress: Object.fromEntries(e.progress),
     })),
   };
+  // 랭커 보드: 레벨↓→경험치↓ (경험치 소스 user/getStudyUsers, mbrId 매칭)
+  out.ranks = rankEntries(out.members);
+  out.meta.expMiss = expMiss;
+  out.meta.rankSource = "user/getStudyUsers (mbrId 매칭)";
 
   fs.mkdirSync(require("path").dirname(OUT_FILE), { recursive: true });
   fs.writeFileSync(OUT_FILE, JSON.stringify(out));

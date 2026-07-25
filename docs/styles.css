@@ -44,6 +44,24 @@ h1 { font-size: 22px; }
 
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 18px; }
 .modal.hidden { display: none; }
+.hidden { display: none !important; }
+
+/* 뷰 탭 (과제 진행도 / 랭커 보드) */
+.views { display: flex; gap: 8px; margin-bottom: 10px; }
+.vtab { background: #131a24; color: #9aa4b2; border: 1px solid var(--line, #232c3a); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 14px; }
+.vtab.active { background: var(--P); border-color: var(--P); color: #fff; }
+
+/* 랭커 보드 */
+.rankNote { color: #8b95a3; font-size: 13px; margin: 0 0 8px; }
+.rankTable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rankTable th, .rankTable td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #1c2431; }
+.rankTable thead th { color: #8b95a3; font-weight: 600; font-size: 12px; }
+.rankTable tr.top3 td { background: rgba(79, 142, 247, 0.08); }
+.rankTable td.rk { width: 42px; font-weight: 700; }
+.rankTable td.nm { font-weight: 600; }
+.expCell { position: relative; min-width: 150px; }
+.expCell .expBar { position: absolute; left: 0; top: 20%; height: 60%; background: rgba(79, 142, 247, 0.25); border-radius: 3px; }
+.expCell span { position: relative; padding-left: 4px; }
 .modal-card { background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; max-width: 640px; width: 100%; max-height: 82vh; overflow: auto; padding: 18px 20px; position: relative; }
 .modal-card h2 { font-size: 17px; margin-bottom: 12px; padding-right: 30px; }
 .close { position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--dim); font-size: 18px; cursor: pointer; }

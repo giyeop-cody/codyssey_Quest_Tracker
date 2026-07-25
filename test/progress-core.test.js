@@ -12,6 +12,7 @@ const {
   collectAssignments,
   fmtYmd,
   buildQuestAxis,
+  rankEntries,
 } = require("../lib/progress-core.cjs");
 
 function row(cd, over = {}) {
@@ -94,6 +95,23 @@ test("buildQuestAxis: 마스터 순서 + 미배정 과제 포함 + census 잔여
   // 빈 입력 안전
   assert.deepEqual(buildQuestAxis([], []), []);
   assert.equal(buildQuestAxis(census, [])[0].uqstnNo, "185012");
+});
+
+test("rankEntries: 레벨↓→경험치↓(null 최하)→이름, 완료 과제 수 부가", () => {
+  const members = [
+    { mbrId: "a", name: "가", guild: "오션", level: 3, exp: 100, progress: { x: { st: "C" }, y: { st: "C" } } },
+    { mbrId: "b", name: "나", guild: "오로라", level: 5, exp: 50, progress: {} },
+    { mbrId: "c", name: "다", guild: "앰버", level: 5, exp: 200, progress: { z: { st: "M" } } },
+    { mbrId: "d", name: "라", guild: "시에나", level: 5, progress: {} }, // exp 없음 → 동레벨 최하
+    { mbrId: "e", name: "마", guild: "오션", level: 6, exp: 10, progress: {} },
+  ];
+  const out = rankEntries(members);
+  assert.deepEqual(out.map((r) => r.name), ["마", "다", "나", "라", "가"]); // Lv6 → Lv5(exp 200>50>없음) → Lv3
+  assert.deepEqual(out.map((r) => r.rank), [1, 2, 3, 4, 5]);
+  assert.equal(out[0].done, 0);
+  assert.equal(out[4].done, 2); // 완료 과제 수 집계
+  assert.equal(out[3].exp, null); // 미수집은 null 유지 (뷰에서 "-" 표기)
+  assert.deepEqual(rankEntries([]), []);
 });
 
 test("aggregate: 미노출 멤버는 미시작(N) 카운트 — 분모는 스코프 총원 (07-25 확정)", () => {
