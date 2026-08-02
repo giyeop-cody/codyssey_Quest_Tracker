@@ -19,6 +19,27 @@ const {
   buildQuestAxis,
   rankEntries,
 } = require("./lib/progress-core.cjs");
+const crypto = require("crypto");
+
+/* 공개 JSON에 개인 식별자(mbrId)를 원문으로 싣지 않는다.
+ * 10자리 숫자(1000 접두) 형식의 값·객체 키를 sha1 앞 8자리로 마스킹한다.
+ * 해시는 결정적이라 직전 파일과의 조인 키로 계속 사용할 수 있다. */
+const PUBLIC_ID_RE = /^1000\d{6}$/;
+function maskPublicId(s) {
+  return "sha1:" + crypto.createHash("sha1").update(String(s)).digest("hex").slice(0, 8);
+}
+function maskPublicIds(v) {
+  if (typeof v === "string" || typeof v === "number") {
+    return PUBLIC_ID_RE.test(String(v)) ? maskPublicId(v) : v;
+  }
+  if (Array.isArray(v)) return v.map(maskPublicIds);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) o[PUBLIC_ID_RE.test(k) ? maskPublicId(k) : k] = maskPublicIds(x);
+    return o;
+  }
+  return v;
+}
 
 const API_BASE = "https://api.usr.codyssey.kr/";
 const INST_CD = process.env.INST_CD || "00021";
@@ -410,7 +431,8 @@ async function fetchStudyInfo(mbrId, name) {
       name: m.name,
       level: m.level ?? null,
       guild: (m.guildNames || [])[0] || "미배정",
-      ...(studyByMember.get(String(m.mbrId)) || {}), // exp/pnt (미발견 시 부재)
+      // 직전 파일의 식별자는 마스킹(sha1:8)된 키일 수 있어 양쪽으로 조회한다
+      ...(studyByMember.get(String(m.mbrId)) || studyByMember.get(maskPublicId(m.mbrId)) || {}), // exp/pnt (미발견 시 부재)
       progress: memberProgress(rows),
     });
   }
@@ -453,7 +475,7 @@ async function fetchStudyInfo(mbrId, name) {
   out.meta.rankSource = "user/getStudyUsers (mbrId 매칭)";
 
   fs.mkdirSync(require("path").dirname(OUT_FILE), { recursive: true });
-  fs.writeFileSync(OUT_FILE, JSON.stringify(out));
+  fs.writeFileSync(OUT_FILE, JSON.stringify(maskPublicIds(out)));
   const allScope = (no) => aggBySubject[no] && aggBySubject[no].ALL;
   console.log(`✅ 완료: 과제 ${assignments.length}종 / 멤버 ${covered.size}명 (${Math.round((Date.now() - started) / 1000)}s)`);
   for (const a of assignments) {
