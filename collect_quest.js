@@ -276,9 +276,9 @@ async function fetchStudyInfo(mbrId, name) {
   console.log(`▶ 과제 진행도 수집 (대상 길드 ${GUILD_IDS.join("/")})`);
 
   // ── 수집 간격 하한 게이트 (2026-08-01 리팩토링 승인안 ①)
-  // 마지막 성공 수집(OUT_FILE meta.generatedAt) 후 COLLECT_MIN_INTERVAL_MIN분(기본 30) 미만이면
+  // 마지막 성공 수집(OUT_FILE meta.generatedAt) 후 COLLECT_MIN_INTERVAL_MIN분(기본 60) 미만이면
   // codyssey 호출 0건으로 종료. 4중 크론 실측 ~74회/일 중복 발화 대응. 우회: COLLECT_FORCE=1.
-  const minGapMin = parseInt(process.env.COLLECT_MIN_INTERVAL_MIN || "30", 10);
+  const minGapMin = parseInt(process.env.COLLECT_MIN_INTERVAL_MIN || "60", 10);
   if (process.env.COLLECT_FORCE !== "1" && minGapMin > 0) {
     try {
       const prev = JSON.parse(fs.readFileSync(OUT_FILE, "utf-8"));
@@ -313,22 +313,43 @@ async function fetchStudyInfo(mbrId, name) {
   }
   if (failed > members.length * 0.2) throw new Error(`멤버 조회 실패 과다 (${failed}/${members.length}) — 수집 중단`);
 
-  // 경험치 센서스 (부가 정보 — 실패필드라도 수집 자체는 죽이지 않음)
+  const censusAssignments = collectAssignments(evalRowsByMember);
+
+  // 경험치 센서스 서브사이클 (2026-08-02 리팩토링 승인안): exp/pnt는 천천히 변하는 부가 정볘이므로
+  // 30분 메인 주기와 분리해 STUDY_MIN_INTERVAL_MIN분(기본 60)마다만 getStudyUsers를 호출한다.
+  // 신선하면 직전 current.json의 members[].exp/pnt를 재사용 → 호출 150회/run → 150회/h로 감소 (-50%).
+  const studyGapMin = parseInt(process.env.STUDY_MIN_INTERVAL_MIN || "60", 10);
   const studyByMember = new Map();
   let expMiss = 0;
-  for (const m of members) {
-    try {
-      const info = await fetchStudyInfo(m.mbrId, m.name);
-      if (info) studyByMember.set(m.mbrId, info); else expMiss += 1;
-    } catch (err) {
-      if (err.sessionInvalid) throw err;
-      expMiss += 1;
+  let prevStudy = null;
+  try {
+    const prev = JSON.parse(fs.readFileSync(OUT_FILE, "utf-8"));
+    const prevAt = prev && prev.meta && prev.meta.studyFetchedAt ? Date.parse(prev.meta.studyFetchedAt) : 0;
+    if (prevAt && (Date.now() - prevAt) / 60000 < studyGapMin && Array.isArray(prev.members)) {
+      prevStudy = { fetchedAt: prev.meta.studyFetchedAt, members: prev.members };
     }
-    await sleep(DELAY_MS);
+  } catch (_) { /* 직전 파일 없음 → 신규 수집 */ }
+  if (prevStudy) {
+    for (const pm of prevStudy.members) {
+      if (pm && (pm.exp != null || pm.pnt != null)) {
+        studyByMember.set(String(pm.mbrId), { exp: pm.exp ?? null, pnt: pm.pnt ?? null });
+      }
+    }
+    expMiss = (prevStudy.members || []).length - studyByMember.size;
+    console.log(`  경험치 서브사이클: ${studyGapMin}분 이내 → 직전 수집분 재사용 (${studyByMember.size}명, 호출 0)`);
+  } else {
+    for (const m of members) {
+      try {
+        const info = await fetchStudyInfo(m.mbrId, m.name);
+        if (info) studyByMember.set(String(m.mbrId), info); else expMiss += 1;
+      } catch (err) {
+        if (err.sessionInvalid) throw err;
+        expMiss += 1;
+      }
+      await sleep(DELAY_MS);
+    }
+    console.log(`  경험치 수집: ${studyByMember.size}명 확보${expMiss ? ` (미발견/실패 ${expMiss}명)` : ""}`);
   }
-  console.log(`  경험치 수집: ${studyByMember.size}명 확보${expMiss ? ` (미발견/실패 ${expMiss}명)` : ""}`);
-
-  const censusAssignments = collectAssignments(evalRowsByMember);
 
   // 과제 마스터 축: 전체 과정 과제 목록을 축으로 (실패 시 census 축 폴 백)
   let assignments = censusAssignments;
@@ -365,7 +386,7 @@ async function fetchStudyInfo(mbrId, name) {
       name: m.name,
       level: m.level ?? null,
       guild: (m.guildNames || [])[0] || "미배정",
-      ...(studyByMember.get(m.mbrId) || {}), // exp/pnt (미발견 시 부재)
+      ...(studyByMember.get(String(m.mbrId)) || {}), // exp/pnt (미발견 시 부재)
       progress: memberProgress(rows),
     });
   }
@@ -386,6 +407,7 @@ async function fetchStudyInfo(mbrId, name) {
       statusOrder: STATUS_ORDER,
       questMaster, // "getUqstnlist" | "census" (마스터 조회 실패 시 폴 백)
       durationSec: Math.round((Date.now() - started) / 1000),
+      studyFetchedAt: prevStudy ? prevStudy.fetchedAt : new Date().toISOString(), // 서브사이클 기준 시각
     },
     assignments,
     aggregates: aggBySubject,
