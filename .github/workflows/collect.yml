@@ -84,6 +84,15 @@ jobs:
       - name: Test gate
         run: node --test test/progress-core.test.js
 
+      # 과제 마스터/requireYn 정적 캐시 (2026-08-01 승인안 ②) — 시즌 내 정적 데이터를 run 간 유지
+      - name: Restore quest static cache
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .quest-cache
+          key: quest-static-${{ github.run_id }}
+          restore-keys: quest-static-
+
       - name: Collect quest progress
         if: steps.check.outputs.skip != 'true'
         env:
@@ -91,6 +100,14 @@ jobs:
           QUEST_ROSTER_FILE: .roster-cache/roster.json
           TZ: Asia/Seoul
         run: node collect_quest.js
+
+      - name: Save quest static cache
+        if: steps.check.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .quest-cache
+          key: quest-static-${{ github.run_id }}
 
       - name: Commit data
         if: steps.check.outputs.skip != 'true'

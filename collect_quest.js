@@ -151,6 +151,25 @@ function saveRosterCache(roster) {
   }
 }
 
+/* ---------------- 정적 데이터 캐시 (.quest-cache) ----------------
+ * 과제 마스터(getUqstnlist)·requireYn(status/list)은 시즌 내 사실상 정적 — run마다 재조회하지 않고
+ * actions/cache로 run 간 유지하며 TTL 7일로 갱신한다 (2026-08-01 리팩토링 승인안 ②). */
+const QCACHE_DIR = process.env.QUEST_CACHE_DIR || ".quest-cache";
+const QCACHE_TTL_MS = 7 * 24 * 3600 * 1000;
+function qcacheGet(name) {
+  try {
+    const f = require("path").join(QCACHE_DIR, name);
+    if (Date.now() - fs.statSync(f).mtimeMs > QCACHE_TTL_MS) return null;
+    return JSON.parse(fs.readFileSync(f, "utf-8"));
+  } catch (_) { return null; }
+}
+function qcacheSet(name, val) {
+  try {
+    fs.mkdirSync(QCACHE_DIR, { recursive: true });
+    fs.writeFileSync(require("path").join(QCACHE_DIR, name), JSON.stringify(val));
+  } catch (_) { /* 캐시 실패는 무시 — 다음 run 재조회 */ }
+}
+
 /* ---------------- 평가 목록 / 슬롯 ---------------- */
 async function fetchMemberEvals(mbrId) {
   const out = [];
@@ -191,15 +210,22 @@ async function fetchMasterCourses(evalRowsByMember) {
   }
   if (!seen.size) throw new Error("census 행에 projectNo/lcorsNo 없음");
   const courses = [];
+  let cacheHits = 0;
   for (const c of seen.values()) {
-    const result = await postForm("learning/learningProgress/getUqstnlist", {
-      projectNo: String(c.projectNo), lcorsNo: String(c.lcorsNo), teamSn: "0",
-    });
-    const list = Array.isArray(result) ? result : (result && result.uqstnList) || [];
-    if (!list.length) throw new Error(`getUqstnlist 빈 목록 (과정 ${c.projectNo}/${c.lcorsNo})`);
+    const ckey = `master-${c.projectNo}-${c.lcorsNo}.json`;
+    let list = qcacheGet(ckey);
+    if (!list) {
+      const result = await postForm("learning/learningProgress/getUqstnlist", {
+        projectNo: String(c.projectNo), lcorsNo: String(c.lcorsNo), teamSn: "0",
+      });
+      list = Array.isArray(result) ? result : (result && result.uqstnList) || [];
+      if (!list.length) throw new Error(`getUqstnlist 빈 목록 (과정 ${c.projectNo}/${c.lcorsNo})`);
+      qcacheSet(ckey, list);
+      await sleep(DELAY_MS);
+    } else cacheHits++;
     courses.push({ ...c, quests: list });
-    await sleep(DELAY_MS);
   }
+  if (cacheHits) console.log(`  과제 마스터 캐시 적중 ${cacheHits}/${courses.length} (호출 생략)`);
   return courses;
 }
 
@@ -207,8 +233,12 @@ async function fetchMasterCourses(evalRowsByMember) {
  * getUqstnlist의 requiredYn이 7/24 배포 이후 전건 null로 날아와 신뢰 불가 (2026-07-25 실측).
  * status/list의 requireYn은 과목/과제 속성이라 오버레이 소스로 쓴다. 실패하면 null(확인불가) 유지. */
 async function fetchStatusRequireMap() {
-  const data = await getJson(`${API_BASE}learning/learningProgress/status/list`);
-  const list = (data && data.uqstns) || [];
+  let list = qcacheGet("status-list.json");
+  if (!list) {
+    const data = await getJson(`${API_BASE}learning/learningProgress/status/list`);
+    list = (data && data.uqstns) || [];
+    qcacheSet("status-list.json", list);
+  }
   const map = new Map();
   for (const q of list) {
     if (q && q.uqstnNo != null && (q.requireYn === "Y" || q.requireYn === "N")) {
@@ -243,6 +273,23 @@ async function fetchStudyInfo(mbrId, name) {
     process.exit(3);
   }
   console.log(`▶ 과제 진행도 수집 (대상 길드 ${GUILD_IDS.join("/")})`);
+
+  // ── 수집 간격 하한 게이트 (2026-08-01 리팩토링 승인안 ①)
+  // 마지막 성공 수집(OUT_FILE meta.generatedAt) 후 COLLECT_MIN_INTERVAL_MIN분(기본 30) 미만이면
+  // codyssey 호출 0건으로 종료. 4중 크론 실측 ~74회/일 중복 발화 대응. 우회: COLLECT_FORCE=1.
+  const minGapMin = parseInt(process.env.COLLECT_MIN_INTERVAL_MIN || "30", 10);
+  if (process.env.COLLECT_FORCE !== "1" && minGapMin > 0) {
+    try {
+      const prev = JSON.parse(fs.readFileSync(OUT_FILE, "utf-8"));
+      const last = prev && prev.meta && prev.meta.generatedAt ? Date.parse(prev.meta.generatedAt) : 0;
+      const ageMin = last ? (Date.now() - last) / 60000 : Infinity;
+      if (ageMin < minGapMin) {
+        console.log(`⏭️ 수집 간격 하한(${minGapMin}분) 미만 — 마지막 수집 ${Math.floor(ageMin)}분 전. 스킵 (codyssey 호출 0건)`);
+        process.exit(0);
+      }
+    } catch (_) { /* 파일 없음 → 첫 수집 진행 */ }
+  }
+
   const roster = await loadRoster();
   const members = roster.members;
   console.log(`대상 멤버 ${members.length}명`);
