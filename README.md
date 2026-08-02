@@ -37,7 +37,7 @@ GitHub Pages 정적 대시보드로 보여줍니다.
 codyssey.kr (읽기 전용)
   ├─ ev/request/mbrSearch/searchList   멤버×과제 평가 상태
   └─ schedule/scheduleAllList          예약 평가 슬롯 (진행중/평가중 구분)
-        ↓ collect_quest.js (Actions, 30분 주기)
+        ↓ collect_quest.js (Actions, 30분 주기 — 마지막 수집 30분 미만 run은 간격 게이트로 스킵. 과제 마스터/requireYn은 정적 캐시)
 docs/data/current.json  →  GitHub Pages (docs/)
 ```
 
