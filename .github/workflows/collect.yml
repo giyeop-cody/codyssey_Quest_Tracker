@@ -12,6 +12,11 @@ on:
     - cron: "15,45 * * * *"
     - cron: "21,51 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "간격 게이트 우회 강제 수집"
+        type: boolean
+        default: false
   # 외부 워치독 점화용 (2026-07-22: GitHub 스케줄러 정전 2회 관측)
   repository_dispatch:
     types: [external-collect]
@@ -111,6 +116,7 @@ jobs:
         env:
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
           QUEST_ROSTER_FILE: .roster-cache/roster.json
+          COLLECT_FORCE: ${{ inputs.force && '1' || '' }}
           TZ: Asia/Seoul
         run: node collect_quest.js
 
