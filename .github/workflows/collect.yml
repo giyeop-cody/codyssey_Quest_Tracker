@@ -80,6 +80,19 @@ jobs:
           fi
           node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
 
+      # 허브 census (EV+Quest mbrSearch 통합, ③): 신선(≤120분) census가 오면 평가 목록 폴 링 생략.
+      # 실패/만료 시 조용히 폐기 → collect_quest.js가 자체 폴 링으로 복귀.
+      - name: Fetch eval census from hub
+        if: steps.check.outputs.skip != 'true'
+        env:
+          HUB_PAT: ${{ secrets.HUB_PAT }}
+        run: |
+          if ! curl -sfL https://raw.githubusercontent.com/giyeop-cody/codyssey_commons/main/census/fetch_hub_census.cjs -o /tmp/fetch_hub_census.cjs; then
+            echo "::notice::census 페처 다운로드 실패 — 자체 폴 링 사용"
+            exit 0
+          fi
+          node /tmp/fetch_hub_census.cjs --file .census-cache/census.json --max-age 120 || true
+
       # 테스트 게이트 (2026-07-25 회귀 점검) — 집계/축 회귀 차단
       - name: Test gate
         run: node --test test/progress-core.test.js

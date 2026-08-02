@@ -171,7 +171,21 @@ function qcacheSet(name, val) {
 }
 
 /* ---------------- 평가 목록 / 슬롯 ---------------- */
-async function fetchMemberEvals(mbrId) {
+/* 허브 census 통합 (2026-08-02 승인안 ③): 신선(≤120분) census.json이 있으면
+ * 멤버별 mbrSearch 폴 링을 생략하고 허브 수집행을 소비한다. 없으면 자체 폴 링. */
+const CENSUS_FILE = process.env.QUEST_CENSUS_FILE || ".census-cache/census.json";
+function loadCensus() {
+  try {
+    const d = JSON.parse(fs.readFileSync(CENSUS_FILE, "utf-8"));
+    if (d && d.byMember && typeof d.fetchedAt === "string") return d;
+  } catch (_) { /* 없음 → 자체 폴 링 */ }
+  return null;
+}
+
+async function fetchMemberEvals(mbrId, census) {
+  if (census && Object.prototype.hasOwnProperty.call(census.byMember, String(mbrId))) {
+    return census.byMember[String(mbrId)] || [];
+  }
   const out = [];
   for (let page = 1; page <= MAX_EVAL_PAGES; page++) {
     const result = await postForm("ev/request/mbrSearch/searchList", {
@@ -295,11 +309,19 @@ async function fetchStudyInfo(mbrId, name) {
   const members = roster.members;
   console.log(`대상 멤버 ${members.length}명`);
 
+  const census = loadCensus();
+  if (census) {
+    const ageMin = Math.round((Date.now() - Date.parse(census.fetchedAt)) / 60000);
+    console.log(`  허브 census 사용 (${census.members}명/${census.rows}행, ${ageMin}분 전본)`);
+  }
   const evalRowsByMember = new Map();
   let failed = 0;
+  let censusHits = 0, apiCalls = 0;
   for (const [i, m] of members.entries()) {
     try {
-      evalRowsByMember.set(m.mbrId, await fetchMemberEvals(m.mbrId));
+      const fromCensus = census && Object.prototype.hasOwnProperty.call(census.byMember, String(m.mbrId));
+      evalRowsByMember.set(m.mbrId, await fetchMemberEvals(m.mbrId, census));
+      if (fromCensus) censusHits++; else apiCalls++;
     } catch (err) {
       if (err.sessionInvalid) throw err;
       failed += 1;
@@ -309,8 +331,10 @@ async function fetchStudyInfo(mbrId, name) {
       evalRowsByMember.delete(m.mbrId);
     }
     if ((i + 1) % 25 === 0) console.log(`  ...진행 ${i + 1}/${members.length}`);
-    await sleep(DELAY_MS);
+    const covered = census && Object.prototype.hasOwnProperty.call(census.byMember, String(m.mbrId));
+    if (!covered) await sleep(DELAY_MS);
   }
+  if (census) console.log(`  census 커버 ${censusHits}명 / 자체 호출 ${apiCalls}명 (호출 절감 ${censusHits}회)`);
   if (failed > members.length * 0.2) throw new Error(`멤버 조회 실패 과다 (${failed}/${members.length}) — 수집 중단`);
 
   const censusAssignments = collectAssignments(evalRowsByMember);
