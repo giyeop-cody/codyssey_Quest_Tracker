@@ -175,11 +175,11 @@ async function fetchMemberEvals(mbrId) {
   const out = [];
   for (let page = 1; page <= MAX_EVAL_PAGES; page++) {
     const result = await postForm("ev/request/mbrSearch/searchList", {
-      mbrId: String(mbrId), instCd: INST_CD, page: String(page), pagePerRows: "50", orderBy: "DESC",
+      mbrId: String(mbrId), instCd: INST_CD, page: String(page), pagePerRows: "200", orderBy: "DESC",
     });
     const list = Array.isArray(result) ? result : (result && result.list) || [];
     out.push(...list);
-    if (list.length < 50) break;
+    if (list.length < 200) break;
     await sleep(DELAY_MS);
   }
   return out;
@@ -237,7 +237,8 @@ async function fetchStatusRequireMap() {
   if (!list) {
     const data = await getJson(`${API_BASE}learning/learningProgress/status/list`);
     list = (data && data.uqstns) || [];
-    qcacheSet("status-list.json", list);
+    // 빈 응답은 캐시하지 않는다 — 일시적 이상(네트워크/세션)이 7일(TTL) 동안 requireYn 오버레이를 비우는 것 방지
+    if (list.length) qcacheSet("status-list.json", list);
   }
   const map = new Map();
   for (const q of list) {
