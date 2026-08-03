@@ -294,10 +294,12 @@ async function fetchStudyInfo(mbrId, name) {
   const hit = list.find((row) => row && String(row.mbrId) === String(mbrId));
   if (!hit) return null;
   // 주의: profImgPath(사용자 업로드 파일명)/recntCntnDt(최근 접속 시각)는 공개 JSON에 싣지 않는다
-  // (행동 감시·실명 파일명 노출 방지, 2026-07-25 프라이버시 점검). 가져오는 것도 exp/pnt뿐.
+  // (행동 감시·실명 파일명 노출 방지, 2026-07-25 프라이버시 점검). 가져오는 것은 exp/pnt + level뿐.
+  // level은 로스터(길드 detail, 최대 2시간 지연)보다 이 경로(60분 서브사이클)가 신선하다 (2026-08-03 실측: 응답에 level 필드 존재 확인).
   return {
     exp: hit.exp != null ? Number(hit.exp) : null,
     pnt: hit.pnt != null ? Number(hit.pnt) : null,
+    level: hit.level != null ? Number(hit.level) : null,
   };
 }
 
@@ -376,8 +378,8 @@ async function fetchStudyInfo(mbrId, name) {
   } catch (_) { /* 직전 파일 없음 → 신규 수집 */ }
   if (prevStudy) {
     for (const pm of prevStudy.members) {
-      if (pm && (pm.exp != null || pm.pnt != null)) {
-        studyByMember.set(String(pm.mbrId), { exp: pm.exp ?? null, pnt: pm.pnt ?? null });
+      if (pm && (pm.exp != null || pm.pnt != null || pm.level != null)) {
+        studyByMember.set(String(pm.mbrId), { exp: pm.exp ?? null, pnt: pm.pnt ?? null, level: pm.level ?? null });
       }
     }
     expMiss = (prevStudy.members || []).length - studyByMember.size;
@@ -426,13 +428,15 @@ async function fetchStudyInfo(mbrId, name) {
     const rows = evalRowsByMember.get(m.mbrId);
     if (!rows) continue; // 조회 실패 제외
     covered.add(m.mbrId);
+    // 직전 파일의 식별자는 마스킹(sha1:8)된 키일 수 있어 양쪽으로 조회한다
+    const study = studyByMember.get(String(m.mbrId)) || studyByMember.get(maskPublicId(m.mbrId)) || {};
+    const { level: studyLevel, ...studyExpPnt } = study;
     memberEntries.push({
       mbrId: String(m.mbrId),
       name: m.name,
-      level: m.level ?? null,
+      level: studyLevel ?? m.level ?? null, // 서브사이클 level(60분) 우선, 없으면 로스터(~2시간)
       guild: (m.guildNames || [])[0] || "미배정",
-      // 직전 파일의 식별자는 마스킹(sha1:8)된 키일 수 있어 양쪽으로 조회한다
-      ...(studyByMember.get(String(m.mbrId)) || studyByMember.get(maskPublicId(m.mbrId)) || {}), // exp/pnt (미발견 시 부재)
+      ...studyExpPnt, // exp/pnt (미발견 시 부재)
       progress: memberProgress(rows),
     });
   }
