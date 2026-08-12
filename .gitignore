@@ -1,0 +1,4 @@
+node_modules/
+.roster-cache/
+*.log
+.DS_Store

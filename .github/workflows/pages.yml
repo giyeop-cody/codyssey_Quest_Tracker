@@ -1,0 +1,31 @@
+# 아카이브: 사이트를 "서비스 종료" 안내 페이지로 덮어쓴다.
+# 이전 배포본에 실명이 남아 있어 이 워크플로로 한 번 갈아엎는다.
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _archive_site
+      - id: deployment
+        uses: actions/deploy-pages@v4
